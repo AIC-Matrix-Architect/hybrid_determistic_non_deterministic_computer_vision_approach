@@ -1,0 +1,162 @@
+# tracking using template matching only 
+
+# Define template matching methods
+template_methods = [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED, cv2.TM_CCOEFF, 
+                    cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR, cv2.TM_CCORR_NORMED]
+
+template_methods_strings = {0: "cv2.TM_SQDIFF", 1: "cv2.TM_SQDIFF_NORMED", 2: "cv2.TM_CCOEFF", 
+                            3: "cv2.TM_CCOEFF_NORMED", 4: "cv2.TM_CCORR", 5: "cv2.TM_CCORR_NORMED"}
+
+# Open video file
+video_path = r"C:\Users\...\drone_field_only_30s.mp4" # Replace with your video path
+
+cap = cv2.VideoCapture(video_path)
+
+if not cap.isOpened():
+    print("Error: Could not open video.")
+    cap.release()
+    exit()
+
+# Get video properties
+fps = cap.get(cv2.CAP_PROP_FPS)
+frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+# Read the first frame
+ret, frame = cap.read()
+if not ret:
+    print("Error: Could not read the first frame.")
+    cap.release()
+    exit()
+
+# Select ROI for template matching
+bbox = cv2.selectROI("Select Object to Track", frame, fromCenter=False, showCrosshair=True)
+cv2.destroyWindow("Select Object to Track")
+template = frame[int(bbox[1]):int(bbox[1]+bbox[3]), int(bbox[0]):int(bbox[0]+bbox[2])]
+
+# User selects template matching methods
+print("Select two template matching methods from the following list:")
+for idx, method in template_methods_strings.items():
+    print(f"{idx}: {method}")
+method1_idx = int(input("Enter the index for the first method: "))
+method2_idx = int(input("Enter the index for the second method: "))
+
+method1 = template_methods[method1_idx]
+method2 = template_methods[method2_idx]
+method1_str = template_methods_strings[method1_idx]
+method2_str = template_methods_strings[method2_idx]
+
+# Initialize video writer
+output_path = fr"C:\Users\...\TM1_{method1_str}_TM2_{method2_str}_tracking.mp4" #  Replace with your video path
+
+fourcc = cv2.VideoWriter_fourcc(*'XVID')
+out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+# Prepare CSV report file
+report_filename = r"C:\Users\hal1e20\python_ver\python_projects\experiments\computer_vision_detection_output\detection_report.csv"
+with open(report_filename, mode='w', newline='') as report_file:
+    fieldnames = ['datetime', 'template_methods', 'tm1_fail_time', 'tm2_fail_time', 'user_intervention_time', 
+                  'tm1_fail_count', 'tm2_fail_count', 'user_intervention_count']
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writeheader()
+
+# Initialize report counters
+tm1_fail_count = 0
+tm2_fail_count = 0
+user_intervention_count = 0
+
+# Get current date and time
+current_datetime = datetime.datetime.now().strftime('%d/%m/%Y - %H:%M:%S')
+
+# Log initial information
+with open(report_filename, mode='a', newline='') as report_file:
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writerow({'datetime': current_datetime, 'template_methods': f'{method1_str}, {method2_str}'})
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("End of video or cannot read frame.")
+        break
+    
+    # Create a copy of the frame for processing
+    process_frame = frame.copy()
+
+    # Template Matching
+    tm1_detected = False
+    tm2_detected = False
+    
+    result1 = cv2.matchTemplate(process_frame, template, method1)
+    result2 = cv2.matchTemplate(process_frame, template, method2)
+    
+    min_val1, max_val1, min_loc1, max_loc1 = cv2.minMaxLoc(result1)
+    min_val2, max_val2, min_loc2, max_loc2 = cv2.minMaxLoc(result2)
+    
+    if method1 in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+        top_left1 = min_loc1
+        tm1_detected = (min_val1 < 0.5)  # SQDIFF methods are better with lower values
+    else:
+        top_left1 = max_loc1
+        tm1_detected = (max_val1 > 0.5)  # Other methods are better with higher values
+        
+    if method2 in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+        top_left2 = min_loc2
+        tm2_detected = (min_val2 < 0.5)
+    else:
+        top_left2 = max_loc2
+        tm2_detected = (max_val2 > 0.5)
+    
+    bottom_right1 = (top_left1[0] + template.shape[1], top_left1[1] + template.shape[0])
+    bottom_right2 = (top_left2[0] + template.shape[1], top_left2[1] + template.shape[0])
+
+    current_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0  # Get current time in video
+    
+    if not tm1_detected:
+        tm1_fail_count += 1
+        with open(report_filename, mode='a', newline='') as report_file:
+            writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+            writer.writerow({'tm1_fail_time': current_time})
+    
+    if not tm2_detected:
+        tm2_fail_count += 1
+        with open(report_filename, mode='a', newline='') as report_file:
+            writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+            writer.writerow({'tm2_fail_time': current_time})
+
+    if not tm1_detected and not tm2_detected:
+        user_intervention_count += 1
+        with open(report_filename, mode='a', newline='') as report_file:
+            writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+            writer.writerow({'user_intervention_time': current_time})
+        print("Both template matchers failed. Please select the object again.")
+        bbox = cv2.selectROI("Select Object to Track", frame, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow("Select Object to Track")
+        template = process_frame[int(bbox[1]):int(bbox[1]+bbox[3]), int(bbox[0]):int(bbox[0]+bbox[2])]
+
+    # Draw bounding boxes for display purposes
+    display_frame = frame.copy()
+    if tm1_detected:
+        cv2.rectangle(display_frame, top_left1, bottom_right1, (255, 0, 0), 2)
+        cv2.putText(display_frame, "TM1", (top_left1[0], top_left1[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+    if tm2_detected:
+        cv2.rectangle(display_frame, top_left2, bottom_right2, (0, 255, 0), 2)
+        cv2.putText(display_frame, "TM2", (bottom_right2[0]+10, top_left2[1] + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    
+    cv2.imshow("Tracking", display_frame)
+    
+    # Write the frame to the output video file
+    out.write(display_frame)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Log final counts
+with open(report_filename, mode='a', newline='') as report_file:
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writerow({'tm1_fail_count': tm1_fail_count, 
+                     'tm2_fail_count': tm2_fail_count, 
+                     'user_intervention_count': user_intervention_count})
+
+cap.release()
+out.release()  # Release the video writer
+cv2.destroyAllWindows()
