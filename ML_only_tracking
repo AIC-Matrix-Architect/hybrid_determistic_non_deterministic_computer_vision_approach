@@ -1,0 +1,152 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+import csv
+import datetime
+
+# Tracking using ML method only (YOLOv)
+# Load the YOLOv8 model
+
+# Define Object Classes:
+
+object_classes = {0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane', 5: 'bus', 
+                  6: 'train', 7: 'truck', 8: 'boat', 9: 'traffic light', 10: 'fire hydrant', 
+                  11: 'stop sign', 12: 'parking meter', 13: 'bench', 14: 'bird', 15: 'cat', 
+                  16: 'dog', 17: 'horse', 18: 'sheep', 19: 'cow', 20: 'elephant', 21: 'bear', 
+                  22: 'zebra', 23: 'giraffe', 24: 'backpack', 25: 'umbrella', 26: 'handbag', 
+                  27: 'tie', 28: 'suitcase', 29: 'frisbee', 30: 'skis', 31: 'snowboard', 
+                  32: 'sports ball', 33: 'kite', 34: 'baseball bat', 35: 'baseball glove', 
+                  36: 'skateboard', 37: 'surfboard', 38: 'tennis racket', 39: 'bottle', 
+                  40: 'wine glass', 41: 'cup', 42: 'fork', 43: 'knife', 44: 'spoon', 
+                  45: 'bowl', 46: 'banana', 47: 'apple', 48: 'sandwich', 49: 'orange', 
+                  50: 'broccoli', 51: 'carrot', 52: 'hot dog', 53: 'pizza', 54: 'donut', 
+                  55: 'cake', 56: 'chair', 57: 'couch', 58: 'potted plant', 59: 'bed', 
+                  60: 'dining table', 61: 'toilet', 62: 'tv', 63: 'laptop', 64: 'mouse', 
+                  65: 'remote', 66: 'keyboard', 67: 'cell phone', 68: 'microwave', 69: 'oven', 
+                  70: 'toaster', 71: 'sink', 72: 'refrigerator', 73: 'book', 74: 'clock', 
+                  75: 'vase', 76: 'scissors', 77: 'teddy bear', 78: 'hair drier', 79: 'toothbrush'}
+
+# Open video file
+video_path = r"C:\Users\hal1e20\python_ver\python_projects\experiments\computer_vision_detection_output\input_video\drone_field_only_30s.mp4" # Replace with your video path
+
+cap = cv2.VideoCapture(video_path)
+
+if not cap.isOpened():
+    print("Error: Could not open video.")
+    cap.release()
+    exit()
+
+# Get video properties
+fps = cap.get(cv2.CAP_PROP_FPS)
+frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+# Read the first frame
+ret, frame = cap.read()
+if not ret:
+    print("Error: Could not read the first frame.")
+    cap.release()
+    exit()
+
+# Select ROI for template matching
+bbox = cv2.selectROI("Select Object to Track", frame, fromCenter=False, showCrosshair=True)
+cv2.destroyWindow("Select Object to Track")
+template = frame[int(bbox[1]):int(bbox[1]+bbox[3]), int(bbox[0]):int(bbox[0]+bbox[2])]
+
+# User selects YOLO model class
+yolo_model_class = input("Enter YOLO model class number. Do not add space. (v8n, v8s, v8m, v8l, v8x): ")
+yolo8_model = YOLO(f'yolo{yolo_model_class}.pt')  # Adjust model path as needed
+
+# User selects object class for YOLOv8
+print("Select object class for YOLOv8 from the following list:")
+for key, value in object_classes.items():
+    print(f"{key}: {value}")
+yolo_class = int(input("Enter the class number: "))
+
+# Initialize video writer
+output_path = fr"C:\Users\hal1e20\python_ver\python_projects\experiments\computer_vision_detection_output\ML_YOLO{yolo_model_class}.mp4"
+fourcc = cv2.VideoWriter_fourcc(*'XVID')
+out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+# Prepare CSV report file
+report_filename = r"C:\Users\hal1e20\python_ver\python_projects\experiments\computer_vision_detection_output\detection_report.csv"
+with open(report_filename, mode='w', newline='') as report_file:
+    fieldnames = ['datetime', 'detected_objects', 'ml_method', 'yolo_fail_time', 'user_intervention_time', 'yolo_fail_count', 'user_intervention_count']
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writeheader()
+
+# Initialize report counters
+yolo_fail_count = 0
+user_intervention_count = 0
+
+# Get current date and time
+current_datetime = datetime.datetime.now().strftime('%d/%m/%Y - %H:%M:%S')
+
+# Log initial information
+with open(report_filename, mode='a', newline='') as report_file:
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writerow({'datetime': current_datetime, 'detected_objects': object_classes[yolo_class], 'ml_method': 'YOLOv8'})
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("End of video or cannot read frame.")
+        break
+    
+    # Create a copy of the frame for processing
+    process_frame = frame.copy()
+    
+    # YOLOv8 Detection
+    results = yolo8_model.predict(process_frame)
+    yolo_detected = False
+    for result in results:
+        for bbox in result.boxes:
+            x1, y1, x2, y2 = int(bbox.xyxy[0][0]), int(bbox.xyxy[0][1]), int(bbox.xyxy[0][2]), int(bbox.xyxy[0][3])
+            conf = bbox.conf[0]
+            cls = bbox.cls[0]
+
+            if int(cls) == yolo_class:
+                yolo_detected = True
+                template = process_frame[y1:y2, x1:x2]  # Update the template with YOLOv8 detection
+                break
+        if yolo_detected:
+            break
+
+    current_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0  # Get current time in video
+
+    if not yolo_detected:
+        yolo_fail_count += 1
+        with open(report_filename, mode='a', newline='') as report_file:
+            writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+            writer.writerow({'yolo_fail_time': current_time})
+        user_intervention_count += 1
+        with open(report_filename, mode='a', newline='') as report_file:
+            writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+            writer.writerow({'user_intervention_time': current_time})
+        print("YOLOv8 failed. Please select the object again.")
+        bbox = cv2.selectROI("Select Object to Track", frame, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow("Select Object to Track")
+        template = process_frame[int(bbox[1]):int(bbox[1]+bbox[3]), int(bbox[0]):int(bbox[0]+bbox[2])]
+
+    # Draw bounding boxes for display purposes
+    display_frame = frame.copy()
+    if yolo_detected:
+        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv2.putText(display_frame, "ML", (x1, y1 + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+    
+    cv2.imshow("Tracking", display_frame)
+    
+    # Write the frame to the output video file
+    out.write(display_frame)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Log final counts
+with open(report_filename, mode='a', newline='') as report_file:
+    writer = csv.DictWriter(report_file, fieldnames=fieldnames)
+    writer.writerow({'yolo_fail_count': yolo_fail_count, 'user_intervention_count': user_intervention_count})
+
+cap.release()
+out.release()  # Release the video writer
+cv2.destroyAllWindows()
